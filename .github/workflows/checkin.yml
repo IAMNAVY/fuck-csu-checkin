@@ -1,0 +1,58 @@
+name: 智慧学工自动打卡
+
+on:
+  # GitHub Actions 使用 UTC；每天 12:00 UTC（北京时间 20:00）启动随机等待。
+  schedule:
+    - cron: "0 12 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: 安装依赖
+        run: python -m pip install -r requirements.txt
+
+      - name: 随机选择执行时间
+        if: github.event_name == 'schedule'
+        run: |
+          # 20:00 北京时间对应 12:00 UTC；随机等待 0—150 分钟。
+          WAIT_SECONDS=$(shuf -i 0-9000 -n 1)
+          echo "随机等待 ${WAIT_SECONDS} 秒后执行（北京时间 20:00—22:30 内）"
+          echo "随机等待：$((WAIT_SECONDS / 60)) 分钟 $((WAIT_SECONDS % 60)) 秒" >> "$GITHUB_STEP_SUMMARY"
+          sleep "$WAIT_SECONDS"
+
+      - name: 手动执行不等待
+        if: github.event_name == 'workflow_dispatch'
+        run: echo "手动执行，跳过随机等待"
+
+      - name: 执行打卡
+        env:
+          # 推荐提供账号密码：token 过期后脚本可以自动重新登录。
+          CHECKIN_USERNAME: ${{ secrets.CHECKIN_USERNAME }}
+          CHECKIN_PASSWORD: ${{ secrets.CHECKIN_PASSWORD }}
+          # 也可以提供 token + casual；两者同时存在时优先使用它们。
+          CHECKIN_TOKEN: ${{ secrets.CHECKIN_TOKEN }}
+          CHECKIN_CASUAL: ${{ secrets.CHECKIN_CASUAL }}
+          CHECKIN_LNG: ${{ secrets.CHECKIN_LNG }}
+          CHECKIN_LAT: ${{ secrets.CHECKIN_LAT }}
+          CHECKIN_COORD: ${{ secrets.CHECKIN_COORD }}
+          CHECKIN_DKLB: ${{ secrets.CHECKIN_DKLB }}
+          CHECKIN_DKDZ: ${{ secrets.CHECKIN_DKDZ }}
+          # 可选：百度地图 AK；不填写时请通过 CHECKIN_DKDZ 手动指定地点。
+          CHECKIN_BAIDU_AK: ${{ secrets.CHECKIN_BAIDU_AK }}
+        run: python checkin.py

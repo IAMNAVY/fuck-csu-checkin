@@ -1,0 +1,6 @@
+checkin_config.json
+__pycache__/
+*.py[cod]
+.venv/
+.env
+daka_api2.har
