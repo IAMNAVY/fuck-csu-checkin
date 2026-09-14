@@ -10,8 +10,8 @@ import requests
 
 from api import CheckinClient, DKLB_DEFAULT
 from auth import LoginError, _token_expired, cas_login
-from config import CONFIG_FILE, load_config, save_config
-from coordinates import RANDOM_POINT_RADIUS_M, random_point_within_radius, to_gcj02
+from config import CENTER_FILE, CONFIG_FILE, load_center, load_config, save_center, save_config
+from coordinates import RANDOM_POINT_RADIUS_M, estimate_center, random_point_within_radius, to_gcj02
 from geocoding import reverse_geocode
 
 if sys.platform == "win32":
@@ -132,10 +132,39 @@ def main():
 
         lng, lat = _get_coordinates(args)
         center_lng, center_lat = to_gcj02(lng, lat, args.coord)
+        print(f"\n输入坐标: ({lng}, {lat}) [{args.coord}]")
+        print(f"转换坐标: ({center_lng:.10f}, {center_lat:.10f}) [GCJ-02]")
+
+        client = CheckinClient(token, casual)
+        print("\n[1/3] 查询打卡班次 ...")
+        info = client.query_dkbc(args.dklb)
+        if str(info.get("code")) not in ("200",):
+            print("  查询失败：", info.get("message"))
+            return 1
+        data = info.get("data") or {}
+        dkbc = data.get("dkbc") or ""
+        print(f"  打卡班次: {dkbc}")
+        print(f"  打卡时段: {data.get('dksjfw')}")
+        print(f"  是否可打: {data.get('kdk')}  是否已打: {data.get('sfydk')}")
+        if not dkbc:
+            print("  未取到 dkbc，无法上报。")
+            return 1
+        if not data.get("kdk"):
+            print("  当前不在打卡时段内，无法打卡。")
+            return 1
+
+        saved_center = load_center(lng, lat, args.coord, args.dklb)
+        if saved_center:
+            center_lng, center_lat = saved_center
+            print(f"  已读取缓存判定中心: ({center_lng:.10f}, {center_lat:.10f})")
+        else:
+            print("  未找到匹配的判定中心，正在进行三点探测 ...")
+            center_lng, center_lat = estimate_center(client, center_lng, center_lat, args.dklb)
+            save_center(lng, lat, args.coord, args.dklb, center_lng, center_lat)
+            print(f"  已保存判定中心到 {CENTER_FILE}: ({center_lng:.10f}, {center_lat:.10f})")
+
         report_lng, report_lat = random_point_within_radius(center_lng, center_lat, RANDOM_POINT_RADIUS_M)
-        print(f"\n输入圆心: ({lng}, {lat}) [{args.coord}]")
-        print(f"转换圆心: ({center_lng:.10f}, {center_lat:.10f}) [GCJ-02]")
-        print(f"第一次定位点（半径 {RANDOM_POINT_RADIUS_M:.0f}m 内）:")
+        print(f"中心 100 米范围内随机定位点:")
         print(f"  ({report_lng:.10f}, {report_lat:.10f}) [GCJ-02]")
 
         if args.dkdz or os.environ.get("CHECKIN_DKDZ"):
@@ -155,24 +184,6 @@ def main():
                 print(f"自动识别地点: {dkdz}")
             else:
                 print("  ⚠️ 未识别到附近地点，将以空地点上报。")
-
-        client = CheckinClient(token, casual)
-        print("\n[1/3] 查询打卡班次 ...")
-        info = client.query_dkbc(args.dklb)
-        if str(info.get("code")) not in ("200",):
-            print("  查询失败：", info.get("message"))
-            return 1
-        data = info.get("data") or {}
-        dkbc = data.get("dkbc") or ""
-        print(f"  打卡班次: {dkbc}")
-        print(f"  打卡时段: {data.get('dksjfw')}")
-        print(f"  是否可打: {data.get('kdk')}  是否已打: {data.get('sfydk')}")
-        if not dkbc:
-            print("  未取到 dkbc，无法上报。")
-            return 1
-        if not data.get("kdk"):
-            print("  当前不在打卡时段内，无法打卡。")
-            return 1
 
         print("\n[2/3] 校验坐标范围 ...")
         range_result = client.check_range(report_lng, report_lat, args.dklb)

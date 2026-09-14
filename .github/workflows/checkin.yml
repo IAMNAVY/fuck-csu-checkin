@@ -1,9 +1,9 @@
 name: 智慧学工自动打卡
 
 on:
-  # GitHub Actions 使用 UTC；每天 12:00 UTC（北京时间 20:00）启动随机等待。
+  # GitHub Actions 使用 UTC；每天 12:13 UTC（北京时间 20:13）启动随机等待。
   schedule:
-    - cron: "0 12 * * *"
+    - cron: "13 12 * * *"
   workflow_dispatch:
 
 permissions:
@@ -27,12 +27,30 @@ jobs:
       - name: 安装依赖
         run: python -m pip install -r requirements.txt
 
+      - name: 计算中心缓存键
+        id: center-key
+        env:
+          CHECKIN_LNG: ${{ secrets.CHECKIN_LNG }}
+          CHECKIN_LAT: ${{ secrets.CHECKIN_LAT }}
+          CHECKIN_COORD: ${{ secrets.CHECKIN_COORD }}
+          CHECKIN_DKLB: ${{ secrets.CHECKIN_DKLB }}
+        run: |
+          CACHE_INPUT="${CHECKIN_LNG}|${CHECKIN_LAT}|${CHECKIN_COORD:-gcj02}|${CHECKIN_DKLB:-PA}"
+          CACHE_HASH=$(printf '%s' "$CACHE_INPUT" | sha256sum | cut -d ' ' -f 1)
+          echo "key=checkin-center-v1-${CACHE_HASH}" >> "$GITHUB_OUTPUT"
+
+      - name: 恢复判定中心
+        uses: actions/cache/restore@v4
+        with:
+          path: .checkin-center.json
+          key: ${{ steps.center-key.outputs.key }}
+
       - name: 随机选择执行时间
         if: github.event_name == 'schedule'
         run: |
-          # 20:00 北京时间对应 12:00 UTC；随机等待 0—150 分钟。
-          WAIT_SECONDS=$(shuf -i 0-9000 -n 1)
-          echo "随机等待 ${WAIT_SECONDS} 秒后执行（北京时间 20:00—22:30 内）"
+          # 20:13 北京时间对应 12:13 UTC；随机等待 0—137 分钟，最晚约 22:30 执行。
+          WAIT_SECONDS=$(shuf -i 0-8220 -n 1)
+          echo "随机等待 ${WAIT_SECONDS} 秒后执行（北京时间 20:13—22:30 内）"
           echo "随机等待：$((WAIT_SECONDS / 60)) 分钟 $((WAIT_SECONDS % 60)) 秒" >> "$GITHUB_STEP_SUMMARY"
           sleep "$WAIT_SECONDS"
 
@@ -56,3 +74,10 @@ jobs:
           # 可选：百度地图 AK；不填写时请通过 CHECKIN_DKDZ 手动指定地点。
           CHECKIN_BAIDU_AK: ${{ secrets.CHECKIN_BAIDU_AK }}
         run: python checkin.py
+
+      - name: 保存判定中心
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .checkin-center.json
+          key: ${{ steps.center-key.outputs.key }}

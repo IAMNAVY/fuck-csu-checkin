@@ -29,6 +29,7 @@ from coordinates import (
     _transform_lat,
     _transform_lng,
     bd09_to_gcj02,
+    estimate_center,
     gcj02_to_bd09,
     random_point_within_radius,
     to_gcj02,

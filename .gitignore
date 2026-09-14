@@ -1,4 +1,5 @@
 checkin_config.json
+.checkin-center.json
 __pycache__/
 *.py[cod]
 .venv/

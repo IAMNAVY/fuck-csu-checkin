@@ -7,7 +7,11 @@ _PI = math.pi
 _A = 6378245.0
 _EE = 0.006693421622965943
 _X_PI = _PI * 3000.0 / 180.0
-RANDOM_POINT_RADIUS_M = 50.0
+RANDOM_POINT_RADIUS_M = 100.0
+_EARTH_RADIUS_M = 6_371_000.0
+_CENTER_PROBE_OFFSET_M = 120.0
+_CENTER_MAX_RESIDUAL_M = 10.0
+_CENTER_PROBE_OFFSETS = ((0.0, 0.0), (_CENTER_PROBE_OFFSET_M, 0.0), (0.0, _CENTER_PROBE_OFFSET_M))
 
 
 def _out_of_china(lng, lat):
@@ -94,6 +98,81 @@ def to_gcj02(lng, lat, coord):
     if coord == "bd09":
         return bd09_to_gcj02(lng, lat)
     return lng, lat
+
+
+def _offset_point(lng, lat, east_m, north_m):
+    lat_rad = math.radians(lat)
+    meters_per_degree_lng = _EARTH_RADIUS_M * math.cos(lat_rad)
+    if abs(meters_per_degree_lng) < 1e-12:
+        raise ValueError("纬度过于接近极点，无法生成查询经度")
+    return (
+        lng + math.degrees(east_m / meters_per_degree_lng),
+        lat + math.degrees(north_m / _EARTH_RADIUS_M),
+    )
+
+
+def _local_point(lng, lat, origin_lng, origin_lat):
+    lat_rad = math.radians(origin_lat)
+    return (
+        math.radians(lng - origin_lng) * _EARTH_RADIUS_M * math.cos(lat_rad),
+        math.radians(lat - origin_lat) * _EARTH_RADIUS_M,
+    )
+
+
+def _pcmi(data):
+    if not isinstance(data, dict):
+        return None
+    try:
+        distance = float(data.get("pcMi"))
+    except (TypeError, ValueError):
+        return None
+    return distance if math.isfinite(distance) and distance >= 0 else None
+
+
+def _fit_center(points, distances):
+    if len(points) != len(distances) or len(points) < 3:
+        return None
+    x1, y1 = points[0]
+    d1 = distances[0]
+    rows = []
+    for (xi, yi), di in zip(points[1:], distances[1:]):
+        rows.append((
+            2 * (xi - x1),
+            2 * (yi - y1),
+            d1 * d1 - di * di + xi * xi + yi * yi - x1 * x1 - y1 * y1,
+        ))
+    (a1, b1, c1), (a2, b2, c2) = rows
+    determinant = a1 * b2 - a2 * b1
+    if abs(determinant) < 1e-9:
+        return None
+    return ((c1 * b2 - c2 * b1) / determinant,
+            (a1 * c2 - a2 * c1) / determinant)
+
+
+def estimate_center(client, lng, lat, dklb="PA"):
+    """用三个实时 pcMi 查询估算固定判定中心，返回 GCJ-02 经纬度。"""
+    points = []
+    distances = []
+    for east_m, north_m in _CENTER_PROBE_OFFSETS:
+        query_lng, query_lat = _offset_point(lng, lat, east_m, north_m)
+        response = client.check_range(query_lng, query_lat, dklb)
+        if not isinstance(response, dict) or str(response.get("code")) != "200":
+            raise ValueError(f"中心探测接口返回异常：{response.get('message') if isinstance(response, dict) else response}")
+        data = response.get("data") or {}
+        distance = _pcmi(data)
+        if distance is None:
+            raise ValueError("中心探测未返回有效 pcMi（可能不在打卡时段内）")
+        points.append(_local_point(query_lng, query_lat, lng, lat))
+        distances.append(distance)
+
+    center = _fit_center(points, distances)
+    if center is None:
+        raise ValueError("中心探测点几何退化，无法估算")
+    residuals = [math.hypot(px - center[0], py - center[1]) - distance
+                 for (px, py), distance in zip(points, distances)]
+    if max(abs(residual) for residual in residuals) > _CENTER_MAX_RESIDUAL_M:
+        raise ValueError(f"中心探测残差过大（最大 {max(abs(residual) for residual in residuals):.1f} 米）")
+    return _offset_point(lng, lat, *center)
 
 
 def random_point_within_radius(lng, lat, radius_m=RANDOM_POINT_RADIUS_M):
