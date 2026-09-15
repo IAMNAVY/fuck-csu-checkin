@@ -3,7 +3,7 @@ name: 智慧学工自动打卡
 on:
   # GitHub Actions 使用 UTC；每天 12:13 UTC（北京时间 20:13）启动随机等待。
   schedule:
-    - cron: "13 12 * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
